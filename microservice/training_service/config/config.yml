@@ -1,0 +1,18 @@
+training:
+  model_name: "titanic_survival_model"
+  test_size: 0.2
+  random_state: 42
+
+model:
+  max_depth: 5
+  n_estimators: 100
+  learning_rate: 0.1
+
+logging:
+  level: "INFO"
+  file: "training_service.log"
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  reload: true
