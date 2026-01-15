@@ -228,3 +228,17 @@ cd microservice/training_service; python -m uvicorn api.main:app --port 8001 --r
 # Method 2: Separate lines
 cd microservice/training_service
 python -m uvicorn api.main:app --port 8001 --reload
+
+
+
+
+## dvc command
+dvc push 
+
+
+## Delete and pull
+del microservice\notebook\data\titanic.csv
+dvc pull
+
+## Status
+dvc status 
