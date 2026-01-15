@@ -1,3 +1,5 @@
+
 .env
-microservice/notebook
+notebook/microservice
 .dvcignore
+.env.*
