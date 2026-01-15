@@ -32,6 +32,7 @@ microservice/
 python -m venv venv
 
 # Activate virtual environment (Windows)
+
 venv\Scripts\activate
 
 # Install dependencies
@@ -195,9 +196,7 @@ cd microservice/training_service && python -m uvicorn api.main:app --port 8001 -
 # 3. Start prediction service (run in separate terminal)
 cd microservice/prediction_service && python -m uvicorn api.main:app --port 8000 --reload
 
-# 4. Open API docs
-Start-Process "http://localhost:8000/docs"
-Start-Process "http://localhost:8001/docs"
+
 ```
 
 ## File Execution Summary
@@ -214,9 +213,18 @@ Start-Process "http://localhost:8001/docs"
 | `training_service/config/config.yml` | Configuration | Loaded by services |
 | `requirements.txt` | Dependencies | `pip install -r requirements.txt` |
 
-## Troubleshooting
 
-- Ensure virtual environment is activated before running any commands
-- Check that model.pkl exists in `prediction_service/artifacts/` before starting prediction service
-- Verify titanic.csv is present in `notebook/data/` before training
-- Use different ports (8000, 8001) to run both services simultaneously
+
+
+
+## Mlflow :- command 
+python microservice/training_service/run_dagshub_simple.py
+
+
+
+# Method 1: Semicolon
+cd microservice/training_service; python -m uvicorn api.main:app --port 8001 --reload
+
+# Method 2: Separate lines
+cd microservice/training_service
+python -m uvicorn api.main:app --port 8001 --reload

@@ -11,6 +11,10 @@ import joblib
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(PROJECT_ROOT))
 
+# Import MLflow tracker with absolute path
+sys.path.append(str(Path(__file__).resolve().parent))
+from mlflow_tracker import setup_mlflow, log_training_run
+
 from training_service.src.preprocess import (
     load_data,
     data_preprocessing,
@@ -47,11 +51,21 @@ def get_model_params():
         'warm_start': False
     }
 
-def run_training_pipeline(data_path: str = None, model_save_path: str = None):
+def run_training_pipeline(data_path: str = None, model_save_path: str = None, use_mlflow: bool = False):
     """
     Executes the end-to-end training pipeline.
     """
     try:
+        # Setup MLflow if requested
+        if use_mlflow:
+            logger.info("Setting up MLflow tracking...")
+            try:
+                setup_mlflow("titanic_experiment")
+                logger.info("MLflow setup successful")
+            except Exception as e:
+                logger.warning(f"MLflow setup failed: {e}. Continuing without MLflow...")
+                use_mlflow = False
+        
         # 1. Load Data
         df = load_data(data_path)
         
@@ -69,9 +83,10 @@ def run_training_pipeline(data_path: str = None, model_save_path: str = None):
         preprocessor = column_transformer(age_pipe, embarked_pipe, deck_pipe)
 
         # 6. Create Model Pipeline
+        model_params = get_model_params()
         model_pipe = Pipeline(steps=[
             ('preprocessor', preprocessor),
-            ("ml", RandomForestClassifier(**get_model_params()))
+            ("ml", RandomForestClassifier(**model_params))
         ])
         
         # 7. Train Model
@@ -92,6 +107,8 @@ def run_training_pipeline(data_path: str = None, model_save_path: str = None):
         logger.info("Model training completed")
         for metric, value in metrics.items():
             logger.info(f"{metric}: {value:.4f}")
+        
+        
         
         if model_save_path:
             # Create directory if it doesn't exist
