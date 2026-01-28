@@ -39,22 +39,9 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Environment Variables
-Create or update `.env` file:
-```bash
-# Optional environment variables
-MODEL_PATH=prediction_service/artifacts/model.pkl
-DATA_PATH=notebook/data/titanic.csv
 ```
 
-## Execution Instructions
 
-### Training Service
-
-#### Start Training API Server
-```bash
-# Navigate to training service directory
-cd training_service
 
 # Start the training API server
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
@@ -146,43 +133,6 @@ pip install -r requirements.txt
 pip install pandas scikit-learn fastapi uvicorn
 ```
 
-## Complete Workflow
-
-### 1. Train a New Model
-```bash
-# Start training service
-cd microservice/training_service
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
-
-# In another terminal, trigger training via API
-curl -X POST "http://localhost:8001/train" \
-     -H "Content-Type: application/json" \
-     -d '{"dataset_path": "notebook/data/titanic.csv"}'
-```
-
-### 2. Start Prediction Service
-```bash
-# Start prediction service
-cd microservice/prediction_service
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 3. Make Predictions
-```bash
-# Test prediction via API
-curl -X POST "http://localhost:8000/predict" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "pclass": 1,
-       "sex": "female",
-       "age": 25,
-       "sibsp": 0,
-       "parch": 0,
-       "fare": 50.0,
-       "embarked": "S",
-       "deck": "B"
-     }'
-```
 
 ## Quick Start Commands
 
@@ -190,11 +140,7 @@ curl -X POST "http://localhost:8000/predict" \
 # 1. Setup environment
 python -m venv venv && venv\Scripts\activate && pip install -r requirements.txt
 
-# 2. Train model (run in separate terminal)
-cd microservice/training_service && python -m uvicorn api.main:app --port 8001 --reload
 
-# 3. Start prediction service (run in separate terminal)
-cd microservice/prediction_service && python -m uvicorn api.main:app --port 8000 --reload
 
 
 ```
@@ -218,12 +164,12 @@ cd microservice/prediction_service && python -m uvicorn api.main:app --port 8000
 
 
 ## Mlflow :- command 
+
+
 python microservice/training_service/run_dagshub_simple.py
 
 
 
-# Method 1: Semicolon
-cd microservice/training_service; python -m uvicorn api.main:app --port 8001 --reload
 
 # Method 2: Separate lines
 cd microservice/training_service

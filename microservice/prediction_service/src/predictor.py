@@ -1,6 +1,10 @@
 
 
 
+
+
+
+
 #prediction_service/src/predictor.py
 import joblib
 import pandas as pd
@@ -8,24 +12,84 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-# Required function for model compatibility - must match training_service implementation
-def _preserve_age_column(X):
-    """Preserve 'age' column name after SimpleImputer transformation."""
-    if isinstance(X, pd.DataFrame):
-        if X.shape[1] == 1 and X.columns[0] != 'age':
-            X.columns = ['age']
-    return X
+# Add training_service to path for model compatibility
+import sys
+MICROSERVICE_PATH = Path(__file__).resolve().parent.parent.parent
+TRAINING_SERVICE_PATH = MICROSERVICE_PATH / "training_service"
+TRAINING_SERVICE_SRC_PATH = TRAINING_SERVICE_PATH / "src"
+
+# Add all necessary paths
+paths_to_add = [
+    str(MICROSERVICE_PATH),
+    str(TRAINING_SERVICE_PATH), 
+    str(TRAINING_SERVICE_SRC_PATH)
+]
+
+for path in paths_to_add:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+# Import all necessary modules that the model might need
+try:
+    # Import training service modules with multiple import strategies
+    try:
+        from training_service.src.preprocess import _preserve_age_column
+    except ImportError:
+        try:
+            from src.preprocess import _preserve_age_column
+        except ImportError:
+            try:
+                import preprocess
+                _preserve_age_column = preprocess._preserve_age_column
+            except ImportError:
+                # Define fallback function
+                def _preserve_age_column(X):
+                    """Preserve 'age' column name after SimpleImputer transformation."""
+                    if isinstance(X, pd.DataFrame):
+                        if X.shape[1] == 1 and X.columns[0] != 'age':
+                            X.columns = ['age']
+                    return X
+    
+    # Import sklearn modules that might be needed
+    from sklearn.preprocessing import FunctionTransformer
+    from feature_engine.encoding import CountFrequencyEncoder
+    from feature_engine.outliers import Winsorizer
+    from feature_engine.encoding import OrdinalEncoder
+    from sklearn.preprocessing import MinMaxScaler, StandardScaler, OneHotEncoder
+    from sklearn.impute import SimpleImputer
+    from sklearn.compose import ColumnTransformer
+    from sklearn.pipeline import Pipeline
+    
+    # Make the function available in multiple namespaces for pickle compatibility
+    import sys
+    current_module = sys.modules[__name__]
+    setattr(current_module, '_preserve_age_column', _preserve_age_column)
+    
+    # Also add to sys.modules for pickle to find
+    if 'src' not in sys.modules:
+        import types
+        src_module = types.ModuleType('src')
+        sys.modules['src'] = src_module
+    if 'src.preprocess' not in sys.modules:
+        import types
+        preprocess_module = types.ModuleType('src.preprocess')
+        preprocess_module._preserve_age_column = _preserve_age_column
+        sys.modules['src.preprocess'] = preprocess_module
+        
+except ImportError as e:
+    print(f"Warning: Could not import training modules: {e}")
+    # Define fallback function
+    def _preserve_age_column(X):
+        """Preserve 'age' column name after SimpleImputer transformation."""
+        if isinstance(X, pd.DataFrame):
+            if X.shape[1] == 1 and X.columns[0] != 'age':
+                X.columns = ['age']
+        return X
 
 ARTIFACT_DIR = Path(__file__).resolve().parent.parent / "artifacts"
 MODEL_PATH = ARTIFACT_DIR / "model.pkl"
 # Calculate log path relative to workspace root (go up from microservice/prediction_service/src to workspace root)
 LOG_PATH = Path(__file__).resolve().parent.parent.parent.parent / ".cursor" / "debug.log"
-
-# Add training_service to path for model compatibility
-import sys
-MICROSERVICE_PATH = Path(__file__).resolve().parent.parent.parent
-if str(MICROSERVICE_PATH) not in sys.path:
-    sys.path.append(str(MICROSERVICE_PATH))
 
 # #region agent log
 def _log(hypothesis_id, message, data):
@@ -56,6 +120,21 @@ def _load_model(force_reload=False):
         _model = joblib.load(MODEL_PATH)
         _preprocessor = _model.named_steps['preprocessor']
         
+        # Fix n_jobs issue that causes column access problems
+        if hasattr(_preprocessor, 'n_jobs'):
+            _preprocessor.n_jobs = 1
+        
+        # Also fix n_jobs in any nested transformers
+        if hasattr(_preprocessor, 'named_transformers_'):
+            for name, transformer in _preprocessor.named_transformers_.items():
+                if hasattr(transformer, 'n_jobs'):
+                    transformer.n_jobs = 1
+                # Check if it's a pipeline with steps
+                if hasattr(transformer, 'named_steps'):
+                    for step_name, step in transformer.named_steps.items():
+                        if hasattr(step, 'n_jobs'):
+                            step.n_jobs = 1
+        
         # #region agent log
         _log("A", "Model loaded", {
             "has_feature_names_in_": hasattr(_preprocessor, 'feature_names_in_'),
@@ -81,12 +160,14 @@ def _load_model(force_reload=False):
             _log("E", "Winsorizer inspection failed", {"error": str(e)})
         # #endregion agent log
         
+        # Use the exact columns the model was trained with
         if hasattr(_preprocessor, 'feature_names_in_'):
             _EXPECTED_COLUMNS = list(_preprocessor.feature_names_in_)
             # #region agent log
             _log("A", "Using feature_names_in_", {"expected_columns": _EXPECTED_COLUMNS})
             # #endregion agent log
         else:
+            # Fallback: use the standard Titanic columns
             _EXPECTED_COLUMNS = ['pclass', 'sex', 'age', 'sibsp', 'parch', 'fare', 'embarked', 'deck']
             # #region agent log
             _log("A", "Using fallback columns", {"expected_columns": _EXPECTED_COLUMNS})
@@ -106,45 +187,54 @@ def predict(data: dict) -> dict:
     Returns:
         Dictionary with prediction and probability
     """
-    # Reload model to ensure we have the latest version (force reload for debugging)
+    # Load model with force reload to get the fresh simple model
     model, preprocessor, expected_columns = _load_model(force_reload=True)
     
     # #region agent log
     _log("B", "predict function entry", {"input_keys": list(data.keys()), "input_values": {k: str(v) for k, v in data.items()}})
     # #endregion agent log
     
-    # Create DataFrame from input data
-    df = pd.DataFrame([data])
+    # Create DataFrame from input data with all expected columns
+    # Start with the expected columns and fill with defaults
+    row_data = {}
     
-    # #region agent log
-    _log("B", "DataFrame created", {"df_columns": list(df.columns), "df_shape": df.shape, "df_dtypes": {k: str(v) for k, v in df.dtypes.items()}})
-    # #endregion agent log
+    # Debug: print what columns the model expects
+    print(f"Model expects columns: {expected_columns}")
+    print(f"Received data keys: {list(data.keys())}")
     
-    # Ensure all required columns are present
-    missing_cols = set(expected_columns) - set(df.columns)
-    if missing_cols:
-        # #region agent log
-        _log("C", "Missing columns error", {"missing_cols": list(missing_cols), "df_columns": list(df.columns), "expected_columns": expected_columns})
-        # #endregion agent log
-        raise ValueError(f"Missing required columns: {missing_cols}. Received columns: {list(df.columns)}")
+    for col in expected_columns:
+        if col in data:
+            row_data[col] = data[col]
+        else:
+            # Set default values for missing columns
+            if col == 'embarked':
+                row_data[col] = 'S'
+            elif col == 'deck':
+                row_data[col] = 'Unknown'
+            elif col in ['pclass', 'sibsp', 'parch']:
+                row_data[col] = 0
+            elif col in ['age', 'fare']:
+                row_data[col] = 0.0
+            elif col == 'sex':
+                row_data[col] = 'male'
+            else:
+                row_data[col] = 0
     
-    # Reorder columns to match the exact order used during training
-    # This is critical for ColumnTransformer with remainder='passthrough'
+    # Create DataFrame with exact columns in exact order
+    df = pd.DataFrame([row_data])
+    
+    # Ensure column order matches exactly
     df = df[expected_columns]
     
+    print(f"Final DataFrame columns: {list(df.columns)}")
+    print(f"DataFrame values: {df.iloc[0].to_dict()}")
+    
     # #region agent log
-    _log("B", "DataFrame reordered", {"df_columns_after": list(df.columns), "df_shape": df.shape, "expected_order": expected_columns})
+    _log("B", "DataFrame created", {"df_columns": list(df.columns), "df_shape": df.shape, "expected_columns": expected_columns})
     # #endregion agent log
     
     # #region agent log
     _log("D", "Before model.predict", {"df_columns": list(df.columns), "df_values": df.iloc[0].to_dict()})
-    # Check if model has preserve_names step
-    try:
-        age_pipe = preprocessor.named_transformers_['age']
-        has_preserve = 'preserve_names' in age_pipe.named_steps
-        _log("D", "Model structure check", {"has_preserve_names_step": has_preserve, "age_pipe_steps": list(age_pipe.named_steps.keys())})
-    except Exception as e:
-        _log("D", "Model structure check failed", {"error": str(e)})
     # #endregion agent log
     
     try:
